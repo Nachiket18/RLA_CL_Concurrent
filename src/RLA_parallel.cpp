@@ -5,30 +5,30 @@
 #include <fstream>
 #include <dirent.h>
 #include <boost/algorithm/string.hpp>
-#include <execution>
+#include <boost/foreach.hpp>
 #include <bits/stdc++.h>
 #include <omp.h>
-
+#include <time.h>
 #include <algorithm>
+#include <execution>
 
 #include <mutex>
 #include <shared_mutex>
-#include <tbb/tbb.h>
 
 #include "RLA_parallel.h"
 
 
 int numThreads = 6;
 int lmerUsed = 3;
-
+static const int ALPHABET_SIZE_LIST[] = {26, 10, 36, 256};
 
 std::shared_mutex read_mutex;
 std::mutex mut;
 
 
-tbb::concurrent_vector<int> deDuplicateIndexData;
-std::vector<vector<int>> blockArray;
-
+std::vector<std::vector<int> > blockArray;
+std::set<pair<int, int> > edgeList;
+map<int, vector<int> > approxConnectedComponents;
 
 
 // helps edit distance calculation in calculateBasicED()
@@ -36,7 +36,7 @@ std::vector<vector<int>> blockArray;
 int calculateBasicED2(string& str1, string& str2, int threshRem)
 {
 	int row, col, i, j;
-	vector<vector<int> > matArr;
+	vector < vector < int > > matArr;
 
 	row		= str1.length() + 1;
 	col 	= str2.length() + 1;
@@ -210,9 +210,9 @@ int calculateBasicED(string& str1, string& str2, int threshRem)
 
 
 
-vector<vector<string>,tbb::cache_aligned_allocator<string> > getData(vector<string> files) {
+vector<vector<string>> getData(vector<string> files) {
     string line;
-    vector<vector<string>,tbb::cache_aligned_allocator<string>> vec2D;
+    vector<vector<string>> vec2D;
 
     // Read from the text file
     
@@ -265,9 +265,9 @@ vector<std::string> getInputFileList(string directory){
 	Initial Sorting of the Input data.
 */
 
-void sort_data_parallel(vector<vector<string> , tbb::cache_aligned_allocator<string> > &data_vector,int column){
+void sort_data_parallel(vector<vector<string> > &data_vector,int column){
 
-	std::sort(data_vector.begin(), data_vector.end(),
+	std::sort(std::execution::par,data_vector.begin(), data_vector.end(),
               [column](std::vector<string> const& v1, std::vector<string> const& v2)
               {
                   return v1[column] < v2[column];
@@ -277,6 +277,8 @@ void sort_data_parallel(vector<vector<string> , tbb::cache_aligned_allocator<str
     //             return v1[column] < v2[column];
     //         });
 	
+	// 12619012
+	// 6568083
 
 }
 
@@ -290,16 +292,10 @@ void sort_data_parallel(vector<vector<string> , tbb::cache_aligned_allocator<str
 */
 
 
-vector<string> find_group_representative(vector<vector<string>> &data_vector,int start,int limit){
+void find_group_representative(vector<vector<string>> &data_vector,int start,int limit,vector<string> &x_prime,vector<string> &temp,vector<int> &indexTemp){
 	
-	vector<string> temp;
-	temp.reserve((limit-start)/3);
-	vector<int> indexTemp; // use for capturing the index of the deduplicate data. Used further while blocking 
+	// use for capturing the index of the deduplicate data. Used further while blocking 
 
-	//cout << "Thread - id" << std::this_thread::get_id() << endl;
-	//read_mutex.lock_shared();
-	
-	//std::shared_lock<std::shared_mutex> lock(read_mutex);
 	temp.emplace_back(data_vector[start][1]);
 	indexTemp.push_back(start);
 	
@@ -316,15 +312,13 @@ vector<string> find_group_representative(vector<vector<string>> &data_vector,int
 		
 	}
 	
-	return temp;
+	//return temp;
 	//read_mutex.unlock_shared();
 	
 	//cout << "Temp Size" << temp.size() <<  endl;
 	//cout << "Thread - id- New" << std::this_thread::get_id() << endl;
 	
-	//std::copy(temp.begin(), temp.end(),x_prime.grow_by(temp.size()));
-
-	//add_representative_x_prime(temp,indexTemp,x_prime);
+	//std::copy(temp.begin(), temp.end(),x_prime.grow_by(temp.size()));	
 
 } 
 
@@ -338,9 +332,9 @@ void createBlock(int indBlockField, int lmerUsed, int type, vector<vector<int>>&
 
 // Not Implemented
 
-/*
 
-	void perform_blocking(vector<vector<string> > &data_vector){
+
+void perform_blocking(std::vector<string>  &x_prime_t,int lmerUsed,int type){
 
 	if (lmerUsed < 3)
 		lmerUsed = 3;
@@ -348,23 +342,59 @@ void createBlock(int indBlockField, int lmerUsed, int type, vector<vector<int>>&
 	int blockTotal 	= pow(26, lmerUsed);
 	string strSample;
 	blockArray.resize(blockTotal);
-	
-	for ( int i = 0; i < deDuplicateIndexData.size(); i++){
+	int numElements = x_prime_t.size() / numThreads;
 
-		vector<int> tmp = deDuplicateIndexData[i];
-		for (int j = 0; j < tmp.size(); j++){
-			
-			for (int k = tmp[j]; k <= tmp[j+1]; k++){
-			
-			}
+	#pragma omp parallel num_threads(6)
+	{	
+		std::vector< std::vector<int> > temp_blocks;
+		temp_blocks.resize(blockTotal);
+
+		#pragma omp for 
+		for (int i = 0; i < x_prime_t.size(); i++){
 		
-		}
+		//cout << "x_prime" << x_prime_t[i] << endl;
+			for (int j = 0; j < (x_prime_t[i].size() - lmerUsed + 1); j++){
+				int blockID=0;
+				for (int k = 0; k < lmerUsed; ++k)
+					if (type == 0)
+						blockID	+= (x_prime_t[i][j + k] - 97) * (int) pow(ALPHABET_SIZE_LIST[type],lmerUsed - k - 1);
+					else if(type == 1)
+						blockID	+= (x_prime_t[i][j + k] - 48) * (int) pow(ALPHABET_SIZE_LIST[type], lmerUsed - k - 1);
+					else if(type == 2)
+					{
+						if(x_prime_t[i][j + k] >= 97)
+							blockID	+= (x_prime_t[i][j + k] - 97) * (int) pow(ALPHABET_SIZE_LIST[type], lmerUsed - k - 1);
+						else
+							blockID	+= (x_prime_t[i][j + k] - 22) * (int) pow(ALPHABET_SIZE_LIST[type], lmerUsed - k - 1); // 48 - 26
+					}
+				
+				if( !( blockID < 0 || blockID >= blockTotal ) ) {
+						temp_blocks[blockID].push_back(i);	 
+				}
+					
+			}
+			
 
+		}
+		//std::cout << "Till Here" << endl;
+		#pragma omp critical
+		{		
+			int thread_data = 0;
+			for (int j=0; j < temp_blocks.size(); j++){
+				if (temp_blocks[j].size() != 0){
+					thread_data += temp_blocks[j].size();
+					for (int k = 0; k < temp_blocks[j].size();k++){
+						blockArray[j].push_back(temp_blocks[j][k]);
+					}
+				}
+			}
+			//blockArray.insert(blockArray.end(),temp_blocks.begin(),temp_blocks.end());		
+		}
 	}
 }
 
 
-*/
+
 
 
 
@@ -373,7 +403,7 @@ void createBlock(int indBlockField, int lmerUsed, int type, vector<vector<int>>&
 	Was used to check correctness of the parallel implementation and difference in serial and parallel run time. 
 */
 
-void find_group_representative_serial(vector<vector<string>,tbb::cache_aligned_allocator<string> > &data_vector,int start,int limit, vector<string> &x_prime){
+void find_group_representative_serial(vector<vector<string> > &data_vector,int start,int limit, vector<string> &x_prime){
 	
 	//cout << "Thread - id" << std::this_thread::get_id() << endl;
 	
@@ -402,7 +432,7 @@ void find_group_representative_serial(vector<vector<string>,tbb::cache_aligned_a
 
 */
 
-void find_group_representative_openmp(vector<vector<string>,tbb::cache_aligned_allocator<string> > &data_vector,int start,int limit, vector<string> &x_prime){
+void find_group_representative_openmp(vector<vector<string>> &data_vector,int start,int limit, vector<string> &x_prime, vector<int> &x_prime_index){
 	
 	//cout << "Thread - id" << std::this_thread::get_id() << endl;
 
@@ -411,21 +441,27 @@ void find_group_representative_openmp(vector<vector<string>,tbb::cache_aligned_a
 	{
 
 		vector<string> temp;
+		vector<int> indexTemp;
+		
 		temp.push_back(data_vector[start][1]);
+		indexTemp.push_back(start);
 	
 		#pragma omp for 
 		for(int i = start+1; i < limit; i++) {	
 
 			if (data_vector[i][1] != data_vector[i-1][1]){
 				temp.push_back(data_vector[i][1]);
+				indexTemp.push_back(i);
 			}
 			
 		}
 		//cout << "Till Here" << endl;
 		#pragma omp critical
+		{
+			x_prime.insert(x_prime.end(), temp.begin(), temp.end());
+			x_prime_index.insert(x_prime_index.end(), indexTemp.begin(), indexTemp.end());
+		}
 		
-		x_prime.insert(x_prime.end(), temp.begin(), temp.end());
-
 	}
 
 	int totalS = 0;	
@@ -442,39 +478,34 @@ void find_group_representative_openmp(vector<vector<string>,tbb::cache_aligned_a
 	Uses mutex as multiple threads are going to write to x_prime which is Critical Section.
 */
 
-void add_representative_x_prime(vector<string> &temp,vector<int> indexTemp,tbb::concurrent_vector<string> &x_prime){
+void add_representative_x_prime(vector<string> &temp,vector<int> indexTemp,std::vector<string> &x_prime){
 
 	//read_mutex.lock();
-	//std::lock_guard<mutex> lock(mut);
+	std::lock_guard<mutex> lock(mut);
 
-	//x_prime.grow_by(temp.size());
-	std::copy(temp.begin(), temp.end(),x_prime.grow_by(temp.size()));
 
-	//temp.shrink_to_fit();
-	//x_prime.push_back(temp);
-
-	//deDuplicateIndexData.push_back(indexTemp);
-
-	//read_mutex.unlock();
+	x_prime.insert(x_prime.end(), temp.begin(), temp.end());
 
 }
 
 
-void generate_x_prime_reprentative(vector<vector<string> , tbb::cache_aligned_allocator<string> > &data_vector,vector<string> &x_prime){
 
-	std::vector<std::future<vector<string>>> threads;
 
+
+void generate_x_prime_reprentative(vector< vector<string> > &data_vector,vector<string> &x_prime, vector<int> &x_prime_index){
+
+	std::vector<std::thread> threads;
+	
 	int numElements = data_vector.size() / numThreads;
 	//cout << "numElements" << numElements << endl;
 	int remainingElements = data_vector.size();
 	int currentRecordPointer = 0;
-	
+	std::vector<int> threadDivideData;
+	threadDivideData.push_back(0);
+	x_prime_index.resize(data_vector.size()/4);
 
+	for (int i=0; i < numThreads; i++){
 
-	for (int i=0; i < numThreads; i++ ){
-		//cout << "i:" << i << endl;
-		//cout << "Record Pointer" << currentRecordPointer << endl;
-		//cout << "Remaining Elements" << remainingElements << endl;
 		int start = 0;
 		int end = 0;
 		std::vector<std::string> out;
@@ -502,33 +533,197 @@ void generate_x_prime_reprentative(vector<vector<string> , tbb::cache_aligned_al
 			currentRecordPointer = tmp;
 			remainingElements = data_vector.size() - currentRecordPointer;			
 			
-			//cout << "Till here" << endl;
-			//cout << "Remaining elements" << remainingElements << endl;
 		}
-		
-		auto start_t = data_vector.begin() + start;
-        auto end_t = data_vector.begin() + end + 1;
+		threadDivideData.push_back(end);
+	
+	
+	//threads.push_back(std::thread(&find_group_representative,std::ref(data_vector),start,end,std::ref(x_prime)));
+	}
 
-		vector<vector<string>> result_tmp(end - start + 1);
-		copy(start_t, end_t, result_tmp.begin());
+	// int start = 0;
+	
+	#pragma omp parallel num_threads(6)
+	{
+		vector<string> temp;
+		vector<int> indexTemp;	
+
+		#pragma omp for 
+		for (int i=1; i < threadDivideData.size(); i++){
+			
+			//find_group_representative(data_vector,start,threadDivideData[i],x_prime,temp,indexTemp)
+			
+			temp.push_back(data_vector[threadDivideData[i-1]][1]);
+			indexTemp.push_back(threadDivideData[i-1]);
+	
+			for(int j = threadDivideData[i-1]+1; j < threadDivideData[i]; j++) {	
+
+				if (data_vector[j][1] != data_vector[j-1][1]){
+					temp.push_back(data_vector[j][1]);
+					indexTemp.push_back(j);
+				}
 		
-		threads.push_back(std::async(std::launch::async,&find_group_representative,std::ref(result_tmp),0,result_tmp.size()));
+			}
+			
+		
+			//cout << "Here" << temp.size() << endl;
+			#pragma omp critical
+			{
+				int size_x_prime = x_prime.size();
+				x_prime.insert(x_prime.end(), temp.begin(), temp.end());
+				x_prime_index.insert(x_prime_index.end(),indexTemp.begin(),indexTemp.end());
+
+			}
+		
+		}
+
 	}
 	
-	// for (auto i = 0; i < threads.size(); i++){
-	// 	if (threads[i].joinable()) {
-	// 		threads[i].join();
-	// 	}	
-    // }
-
-	for (auto i = 0; i < threads.size(); i++){
-		//x_prime.reserve(x_prime.size() + threads[i].get().size());
-		vector<string> tmp = threads[i].get();
-		x_prime.insert(x_prime.end(),tmp.begin(),tmp.end());
-    }
-	
-
 }
+
+
+
+void generate_edges_concurrent(std::vector<std::vector<string>> &data_vector , std::vector<string>  &x_prime_t,std::vector<int> &x_prime_index,int dataSize){
+
+	int dataPerThread = dataSize / numThreads;
+	cout << "Data=perThread" << dataPerThread << endl;
+	std::vector<int> threadDivideDataBlocks;
+	threadDivideDataBlocks.resize(numThreads+1);
+
+	threadDivideDataBlocks.push_back(0);
+
+	int currentThreadData = 0;
+
+	for(int i = 0; i < blockArray.size(); i++){
+
+		if ( ( currentThreadData + blockArray[i].size() ) < dataPerThread){
+			currentThreadData += blockArray[i].size();
+		}
+		else{
+			threadDivideDataBlocks.push_back(i);
+			currentThreadData = 0;
+		}
+
+	}
+
+
+	#pragma omp parallel num_threads(6) 
+	{
+		std::set<pair<int, int> > set_of_edges;
+
+		#pragma omp for
+		for(int i = 1; i < threadDivideDataBlocks.size(); i++){
+
+			for( int m = threadDivideDataBlocks[i-1]; m < threadDivideDataBlocks[i]; m++) {
+				
+				std::vector<int> block = blockArray[m];
+				std::sort(block.begin(),block.end());
+				block.erase(unique( block.begin(), block.end() ), block.end());
+
+				for (int j = 0; j < block.size(); j++){
+					for (int k = j+1; k < block.size();k++){
+						int first_j = block[j];
+						int first_k = block[k];
+						int dist_last_name = calculateBasicED(x_prime_t[first_j],x_prime_t[first_k],1);
+						
+						if (dist_last_name > 1)
+							continue;
+						
+						int dist_first_name = calculateBasicED(data_vector[x_prime_index[first_j]][2],data_vector[x_prime_index[first_k]][2],1);
+						int dist = dist_first_name + dist_last_name;
+
+						if (first_j > first_k){
+							if (dist <= 1){
+								std::pair<int, int> edge_pair;
+								edge_pair.first = first_j;
+								edge_pair.second = first_k;
+								if (!set_of_edges.count(edge_pair)){
+									set_of_edges.insert(edge_pair);
+								}
+							}
+						}
+						else{
+
+							if (dist <= 1){
+								std::pair<int, int> edge_pair;
+								edge_pair.first = first_k;
+								edge_pair.second = first_j;
+								if (!set_of_edges.count(edge_pair)){
+									set_of_edges.insert(edge_pair);
+								}								
+							}
+						}								
+					}
+				}
+			}
+
+		}
+
+		#pragma omp critical
+		{
+				set<std::pair<int,int>>::iterator itr;
+				edgeList.insert(set_of_edges.begin(), set_of_edges.end());
+				cout << set_of_edges.size() << endl;
+
+		}
+
+	}
+	
+}
+
+
+
+
+int findRoot(int pointID, vector<int> &parentArr){
+	if (parentArr[pointID] != pointID)
+		parentArr[pointID]	= findRoot(parentArr[pointID], parentArr);
+
+	return parentArr[pointID];
+}
+
+void findConnComp(int totalUniqueRecords)
+{
+	int i, rootU, rootV, edgeTotal;
+    vector<int> parentArr;
+
+	for(i = 0; i < totalUniqueRecords; ++i)
+	{
+		parentArr.push_back(i);
+	}
+
+	edgeTotal	= edgeList.size();
+	cout << "Number of edges " << edgeTotal  << endl;
+
+    BOOST_FOREACH(pair p, edgeList) {
+        rootU	= findRoot(p.first, parentArr);
+		rootV	= findRoot(p.second, parentArr);
+
+		if(rootU != rootV)
+		{
+            parentArr[rootV] = rootU;
+		}
+    }
+    int componentsInClusters = 0;
+    for(int i =0; i<parentArr.size(); i++) {
+        int root;
+        if (parentArr[i] == i) {
+            // cout<< "i: " << i << " Parent: "<< parentArr[i] << " Val: " << uniqueRecords[i].first << " String "<< uniqueRecords[i].second<<endl;
+            root = i;
+        } else {
+            root = findRoot(i, parentArr);
+        }
+        if (!approxConnectedComponents.count(root)) {
+            vector<int> compononents;
+            compononents.push_back(root);
+            approxConnectedComponents[root] = compononents;
+        } else {
+            approxConnectedComponents[root].push_back(i);
+            componentsInClusters++;
+        }
+    }
+    cout<< "#Connected Components: " << approxConnectedComponents.size()<<endl;
+    cout<< "#Total Non Root Nodes in graph: " << componentsInClusters << endl;
+}
+
 
 
 void buildGraph (vector<vector<string> > vec2D,Graph &graph,long long int recordTotal){
@@ -568,20 +763,23 @@ int main(void)
   const char* directoryPath = "/home/nachiket/RLA_CL_EXTRACT/data/in_1000k";
   vector<std::string> fileList = getInputFileList(directoryPath);
   
+  struct timespec start, finish;
+  double elapsed;
+
   cout << fileList.size() << endl;
   
 
-  vector<vector<string>,tbb::cache_aligned_allocator<string> >  vec2D  = getData(fileList);
+  std::vector<std::vector<string>>  vec2D  = getData(fileList);
   cout << "Size:" << vec2D.size() << endl;
   
+  
+
   sort_data_parallel(vec2D,1);
+
+
 
   std::vector<string> x_prime;
  
-  
-
-
-  
   int totalsize = 0;
 
 //   cout << "Total-Size-P" << x_prime.size() << endl;
@@ -590,98 +788,93 @@ int main(void)
 	
 
 //   clock_t start_serial = clock();
-    	
-//   find_group_representative_serial(vec2D,0,vec2D.size(),x_prime); //
-		
-//   clock_t duration_serial = clock() - start_serial;	
 
-//   cout << "duration_serial" << duration_serial << endl;
-	
-	
-	// clock_t start_uniq = clock();
-
-	// for(int i = 0; i < vec2D.size(); i++) {	
-
-	// 	x_prime_n.push_back(vec2D[i][1]);
-	// }
-
-	// de_duplication_parallel_uniq(x_prime_n);
-
-	// clock_t duration_uniq = clock() - start_uniq;
+	//clock_gettime(CLOCK_MONOTONIC, &start);
 
 
-	// cout << " X prime Size " << x_prime_n.size() << endl; 
-	// cout << "Duration Uniq" << duration_uniq << endl;
+	struct timespec start_serial, finish_serial;
+ 	double elapsed_serial;
 
-	// Duration_ Parallel --> 5724118 
-	                          
-	// Duration_ Serial:      723952
+	std::vector<string> x_prime_serial;
 
+	// clock_gettime(CLOCK_MONOTONIC, &start_serial);
 
-		// Duration_ Parallel5916083
+	double startTime_serial = omp_get_wtime();
 
-        // Performance counter stats for './RLA_parallel':
+	find_group_representative_serial(vec2D,0,vec2D.size(),x_prime_serial);
 
-        // 348,001,239,875      L1-dcache-loads                                             
-        // 986,871,106      L1-dcache-load-misses     #    0.28% of all L1-dcache accesses
-        // 1,019      context-switches                                            
+	double stopTime_serial = omp_get_wtime();
 
-        // 140.917704162 seconds time elapsed
+	// clock_gettime(CLOCK_MONOTONIC, &finish_serial);
+	// elapsed_serial = (finish_serial.tv_sec - start_serial.tv_sec);
 
-        // 145.433407000 seconds user
-        // 0.219965000 seconds sys
+ 	cout << "Elapsed-serial" << (stopTime_serial - startTime_serial) << endl;
+ 
+ 	cout << "Size" << x_prime_serial.size() << endl;
 
-	clock_t start_serial = clock();
-	
-	find_group_representative_serial(vec2D,0,vec2D.size(),x_prime);
-	
-	clock_t duration_serial = clock() - start_serial;
-
-	cout << "\nDurationSerial:" << duration_serial << endl;
-
-
-	
 	std::vector<string> x_prime_n;
-
-	clock_t start_mp = clock();
+	std::vector<int> x_prime_index;
+	// clock_t start_mp = clock();
 	
-	x_prime_n.push_back("#");
+	// x_prime_n.push_back("#");
 
-	find_group_representative_openmp(vec2D,0,vec2D.size(),x_prime_n);
+	// double startTime_mp = omp_get_wtime();
+
+	// find_group_representative_openmp(vec2D,0,vec2D.size(),x_prime_n,x_prime_index);
 	
-	clock_t duration_mp = clock() - start_mp;
-
-	cout << "\n Duration OpenMP:" << duration_mp << endl;
+	// double endTime_mp = omp_get_wtime();
 
 
-  
+	// cout << "Elapsed-MP" << (endTime_mp - startTime_mp) << endl;
+ 	// cout << "Size" << x_prime_n.size() << endl;
 
 
+	std::vector<string> x_prime_t;
 
-
+	double startTime_p = omp_get_wtime();
 	
+	generate_x_prime_reprentative(vec2D,x_prime_t,x_prime_index);
+
+	double endTime_p = omp_get_wtime();
+
+	cout << "Elapsed - P" << (endTime_p - startTime_p) << endl;
+ 	cout << "Size" << x_prime_t.size() << endl;
+
+
+	double start_time_block = omp_get_wtime();	
 	
-	// cout << "totalS" << totalsize;
+	perform_blocking(x_prime_t,3,0);
 
-	// clock_t duration_serial = clock() - start_serial;
-	// cout << "Duration, DurationSerial:" <<duration  << "," << duration_serial << endl;
-
-
-//   for (int i =0;i<4;i++){
-// 	for (int j=0;j<2;j++){
-// 		cout << vec2D[i][j] << "\t";
-// 	}
+	int blockArraySize  = 0 ;
+	for (int i = 0; i < blockArray.size(); i++){
+		blockArraySize += blockArray[i].size();
+	}
 	
-//   }
+	cout << "BlockArray Size" << blockArraySize << endl;
 
-  //Graph graph(recordTotal);
-  //buildGraph(vec2D,graph,recordTotal);
-  
-   return 0;
+	double end_time_block = omp_get_wtime();	
+
+	cout << "Elapsed - Blocking" << (end_time_block - start_time_block) << endl;
+
+	double start_time_edge_generation = omp_get_wtime();
+
+	generate_edges_concurrent(vec2D,x_prime_t,x_prime_index,blockArraySize);
+
+	double end_time_edge_generation = omp_get_wtime();
+
+	cout << "Elapsed - EdgeList" << (end_time_edge_generation - start_time_edge_generation) << endl;
+	cout << edgeList.size() << endl;
+    
+	return 0;
 }
 
 
 
+/*
 
+RESULTS
 
+Elapsed-serial  0.4523
+Elapsed - P     0.151133
 
+*/

@@ -46,11 +46,12 @@ public:
 
 int calculateBasicED2(string& str1, string& str2, int threshRem);
 int calculateBasicED(string& str1, string& str2, int threshRem);
-vector<vector<string>,tbb::cache_aligned_allocator<string> > getData(vector<string> files);
+vector<vector<string> > getData(vector<string> files);
 vector<std::string> getInputFileList(std::string directory);
-void sort_data_parallel(vector<vector<string>,tbb::cache_aligned_allocator<string> > data_vector);
+void sort_data_parallel(vector<vector<string>> data_vector);
 void buildGraph (vector<vector<string> > vec2D,Graph &graph,long long int recordTotal);
-vector<string> find_group_representative(vector<vector<string>> &data_vector,int start,int limit);
-void add_representative_x_prime(vector<string> &temp,vector<int>indexTemp,tbb::concurrent_vector<string> &x_prime);
-void generate_x_prime_reprentative(vector<vector<string>,tbb::cache_aligned_allocator<string> > &data_vector,vector<string> &x_prime);
+//void find_group_representative(vector<vector<string>,tbb::cache_aligned_allocator<string>> &data_vector,int start,int limit,vector<string> &x_prime);
+void find_group_representative(vector<vector<string>> &data_vector,int start,int limit,vector<string> &x_prime,vector<string> &temp,vector<int> &indexTemp);
+void add_representative_x_prime(vector<string> &temp,vector<int>indexTemp,vector<string> &x_prime);
+void generate_x_prime_reprentative(vector<vector<string> > &data_vector,vector<string> &x_prime);
 void createBlock(int indBlockField, int lmerUsed, int type, vector<vector<int> >& blockArr);
